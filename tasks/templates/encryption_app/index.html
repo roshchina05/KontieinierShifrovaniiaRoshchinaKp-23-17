@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<!--
+  ============================================================
+  МОДУЛЬ СКВОЗНОГО ШИФРОВАНИЯ ТРАФИКА ТСД
+  ============================================================
+
+  Description:
+    Веб-интерфейс для демонстрации работы контейнера безопасности,
+    обеспечивающего сквозное шифрование трафика между терминалами
+    сбора данных (ТСД) и центральным сервером в корпоративной
+    логистической системе.
+
+    Алгоритм шифрования: AES-256-GCM
+    Диверсификация ключей: HKDF-SHA-256 (параметр: "wms-lr3")
+    Требование ТЗ: задержка шифрования/расшифрования не более 50 мс
+
+  Переменные, которые пользователь может изменить:
+    - Устройство (device): идентификатор ТСД, например TSC-001, TAB-101
+    - Пользователь (user): логин сотрудника, например klad_1, kompl_2
+    - Команда (data): команда ТСД в формате WMS,
+        например OP:PICK или ART:5678;QTY:12;LOC:B2-03;OP:SHIP
+
+  Требования к запуску:
+    - Python 3.10+
+    - Django 5.x
+    - cryptography, matplotlib, numpy
+    - Команда: python manage.py runserver 0.0.0.0:5000
+
+  Лицензия: учебный проект, лабораторная работа №1
+  ============================================================
+-->
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Модуль сквозного шифрования трафика ТСД</title>
+    <style>
+        /* --- Базовые стили --- */
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #e0e0e0;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container { max-width: 1300px; margin: 0 auto; }
+
+        /* --- Заголовок --- */
+        .header {
+            text-align: center;
+            margin-bottom: 24px;
+            padding: 20px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 12px;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        .header h1 { font-size: 22px; color: #64b5f6; margin-bottom: 6px; }
+        .header p { color: #9e9e9e; font-size: 13px; }
+
+        /* --- Панель ввода --- */
+        .input-panel {
+            background: rgba(255,255,255,0.05);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        .input-panel > label {
+            display: block;
+            font-size: 13px;
+            color: #90caf9;
+            font-weight: 600;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        /* --- Заголовки колонок таблицы ввода --- */
+        .col-headers {
+            display: grid;
+            grid-template-columns: 130px 130px 1fr 36px;
+            gap: 8px;
+            margin-bottom: 4px;
+            padding: 0 2px;
+        }
+        .col-headers span {
+            font-size: 11px;
+            color: #78909c;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+        }
+
+        /* --- Строка ввода пакета --- */
+        .packet-row {
+            display: grid;
+            grid-template-columns: 130px 130px 1fr 36px;
+            gap: 8px;
+            margin-bottom: 8px;
+            align-items: center;
+        }
+        .packet-row input {
+            padding: 9px 12px;
+            background: #1a1a2e;
+            border: 1px solid #333;
+            border-radius: 6px;
+            color: #e0e0e0;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            width: 100%;
+        }
+        .packet-row input:focus { outline: none; border-color: #64b5f6; }
+
+        /* --- Кнопки --- */
+        .btn { padding: 8px 14px; border: none; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; }
+        .btn-add { background: #2e7d32; color: white; margin-top: 6px; }
+        .btn-add:hover { background: #388e3c; }
+        .btn-del { background: #c62828; color: white; padding: 6px 10px; }
+        .btn-del:hover { background: #d32f2f; }
+        .btn-run {
+            display: block; width: 100%; padding: 13px;
+            font-size: 15px; background: #1565c0; color: white;
+            margin-top: 14px; border-radius: 8px; border: none; cursor: pointer;
+            font-weight: 700; text-transform: uppercase; letter-spacing: 1px;
+        }
+        .btn-run:hover { background: #1976d2; }
+        .btn-run:disabled { background: #37474f; cursor: wait; }
+
+        /* --- Секции результатов --- */
+        .section {
+            background: rgba(255,255,255,0.05);
+            border-radius: 12px;
+            padding: 18px 20px;
+            margin-bottom: 20px;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        .section h2 {
+            font-size: 13px;
+            color: #64b5f6;
+            margin-bottom: 14px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        /* --- Таблицы результатов --- */
+        table { width: 100%; border-collapse: collapse; font-size: 12px; }
+        th, td { padding: 8px 8px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.05); }
+        th {
+            color: #90caf9; font-weight: 600; font-size: 11px;
+            text-transform: uppercase; letter-spacing: 0.4px;
+            background: rgba(255,255,255,0.03);
+        }
+        tr:hover td { background: rgba(255,255,255,0.03); }
+        .badge-ok       { color: #4caf50; font-weight: bold; background: rgba(76,175,80,0.12); padding: 3px 9px; border-radius: 4px; font-size: 11px; }
+        .badge-protected{ color: #4caf50; background: rgba(76,175,80,0.12); padding: 3px 9px; border-radius: 4px; font-size: 11px; }
+        .badge-error    { color: #ef5350; font-weight: bold; background: rgba(239,83,80,0.12); padding: 3px 9px; border-radius: 4px; font-size: 11px; }
+        .mono  { font-family: 'Courier New', monospace; font-size: 11px; color: #ffab40; word-break: break-all; max-width: 180px; }
+        .ttime { font-family: 'Courier New', monospace; font-size: 11px; color: #b0bec5; }
+
+        /* --- Карточки статистики --- */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 12px;
+        }
+        .stat-card {
+            background: rgba(255,255,255,0.04);
+            border-radius: 8px;
+            padding: 14px 16px;
+            border: 1px solid rgba(255,255,255,0.08);
+        }
+        .stat-card .stat-label { font-size: 11px; color: #78909c; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.4px; }
+        .stat-card .stat-value { font-size: 22px; font-weight: 700; color: #e0e0e0; font-family: 'Courier New', monospace; }
+        .stat-card .stat-value.green { color: #4caf50; }
+        .stat-card .stat-value.blue  { color: #64b5f6; }
+        .stat-card .stat-sub  { font-size: 10px; color: #546e7a; margin-top: 3px; }
+
+        /* --- Строка с ключом шифрования --- */
+        .key-display {
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            color: #ffab40;
+            background: rgba(255,171,64,0.08);
+            border-radius: 6px;
+            padding: 8px 14px;
+            margin-bottom: 16px;
+        }
+
+        /* --- Графики --- */
+        .charts-row { display: grid; grid-template-columns: 1fr; gap: 20px; margin-bottom: 20px; }
+        .chart-card {
+            background: rgba(255,255,255,0.05);
+            border-radius: 12px;
+            padding: 18px 20px;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        .chart-card h2 {
+            font-size: 13px; color: #64b5f6; margin-bottom: 12px;
+            padding-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,0.1);
+            text-transform: uppercase; letter-spacing: 0.5px;
+        }
+        .chart-card img { max-width: 100%; border-radius: 8px; display: block; }
+
+        /* --- Индикатор загрузки --- */
+        .spinner { display:none; text-align:center; padding: 20px; color: #90caf9; font-size: 14px; }
+
+        @media (max-width: 900px) {
+            .charts-row { grid-template-columns: 1fr; }
+            .packet-row, .col-headers { grid-template-columns: 110px 110px 1fr 36px; }
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+
+    <!-- ===== ЗАГОЛОВОК ===== -->
+    <div class="header">
+        <h1>Модуль сквозного шифрования трафика ТСД</h1>
+        <p>AES-256-GCM · HKDF-SHA-256 · Диверсификация ключей по устройству · Требование ТЗ: ≤ 50 мс</p>
+    </div>
+
+    <!-- ===== ФОРМА ВВОДА ПАКЕТОВ ===== -->
+    <div class="input-panel">
+        <label>Пакеты терминала сбора данных (ТСД):</label>
+
+        <!-- Заголовки колонок формы -->
+        <div class="col-headers">
+            <span>Устройство</span>
+            <span>Пользователь</span>
+            <span>Команда ТСД</span>
+            <span></span>
+        </div>
+
+        <!-- Сюда динамически добавляются строки пакетов -->
+        <div id="packet-list"></div>
+
+        <button class="btn btn-add" id="btn-add">+ Добавить пакет</button>
+        <button class="btn btn-run" id="btn-run">
+            Зашифровать и проверить защиту
+        </button>
+        <div id="inline-error" style="display:none; color:#ff6b6b; margin-top:8px; font-size:14px;"></div>
+    </div>
+
+    <!-- Индикатор загрузки -->
+    <div class="spinner" id="spinner">⏳ Выполняется шифрование...</div>
+
+    <!-- ===== БЛОК РЕЗУЛЬТАТОВ (скрыт до первого запуска) ===== -->
+    <div id="results-section" style="display:none;">
+
+        <!-- Информация о ключе текущей сессии -->
+        <div class="key-display" id="key-display"></div>
+
+        <!-- Статистика -->
+        <div class="section">
+            <h2>Итоги работы контейнера</h2>
+            <div class="stats-grid" id="stats-grid"></div>
+        </div>
+
+        <!-- Таблица 1 — легитимная передача -->
+        <div class="section">
+            <h2>Таблица 1 — Легитимная передача (правильный ключ)</h2>
+            <div id="table1"></div>
+        </div>
+
+        <!-- Таблица 2 — временные характеристики -->
+        <div class="section">
+            <h2>Таблица 2 — Временные характеристики</h2>
+            <div id="table2"></div>
+        </div>
+
+        <!-- Таблица 3 — попытка злоумышленника -->
+        <div class="section">
+            <h2>Таблица 3 — Попытка перехвата злоумышленником (чужой ключ)</h2>
+            <div id="table3"></div>
+        </div>
+
+        <!-- Графики -->
+        <div class="charts-row">
+            <div class="chart-card">
+                <h2>График 1 — Время шифрования и расшифрования</h2>
+                <img id="chart-time" src="" alt="График времени">
+            </div>
+            <div class="chart-card">
+                <h2>График 2 — Размер пакетов до и после шифрования</h2>
+                <img id="chart-size" src="" alt="График размеров">
+            </div>
+        </div>
+
+    </div><!-- /results-section -->
+
+</div><!-- /container -->
+
+<script>
+    /* =========================================================
+       Предустановленные пакеты — полностью совпадают с main.py
+       Пользователь может добавлять/удалять/редактировать строки
+       ========================================================= */
+    const DEFAULT_PACKETS = [
+        { device: "TSC-001", user: "klad_1",  data: "OP:PICK" },
+        { device: "TSC-002", user: "klad_2",  data: "ART:5678;QTY:12;LOC:B2-03;OP:SHIP" },
+        { device: "TAB-101", user: "kompl_1", data: "ART:9012;QTY:200;LOC:C1-07;OP:PICK" },
+        { device: "TAB-102", user: "kompl_2", data: "ART:3456;QTY:5;LOC:A3-02;OP:PICK" },
+        { device: "TSC-001", user: "klad_1",  data: "ART:7890;QTY:80;LOC:D4-10;OP:MOVE" },
+        { device: "TAB-101", user: "kompl_1", data: "ART:1111;QTY:30;LOC:E2-05;OP:COUNT" },
+    ];
+
+    /* Добавить строку ввода пакета (device, user, data — необязательные начальные значения) */
+    function addRow(device='', user='', data='') {
+        const list = document.getElementById('packet-list');
+        const div  = document.createElement('div');
+        div.className = 'packet-row';
+        div.innerHTML = `
+            <input type="text" list="dl-devices"  placeholder="TSC-001" value="${device}">
+            <input type="text" list="dl-users"    placeholder="klad_1"  value="${user}">
+            <input type="text" list="dl-commands" placeholder="OP:PICK" value="${data}">
+            <button class="btn btn-del" onclick="removeRow(this)" title="Удалить">✕</button>
+        `;
+        list.appendChild(div);
+    }
+
+    /* Удалить строку (минимум одна строка должна остаться) */
+    function removeRow(btn) {
+        if (document.querySelectorAll('.packet-row').length > 1)
+            btn.parentElement.remove();
+    }
+
+    /* Собрать все пакеты из формы в массив объектов */
+    function collectPackets() {
+        const packets = [];
+        document.querySelectorAll('.packet-row').forEach(row => {
+            const [inp0, inp1, inp2] = row.querySelectorAll('input');
+            const device = inp0.value.trim();
+            const user   = inp1.value.trim();
+            const data   = inp2.value.trim();
+            if (device && data) packets.push({ device, user, data });
+        });
+        return packets;
+    }
+
+    /* ---- Построение Таблицы 1: Легитимная передача ---- */
+    function buildTable1(results) {
+        let html = `<table>
+            <tr>
+                <th>#</th><th>Устройство</th><th>Пользователь</th>
+                <th>Исходный пакет</th><th>Зашифрованный (фрагмент)</th><th>Статус</th>
+            </tr>`;
+        results.forEach((r, i) => {
+            const badge = r.status === 'OK'
+                ? `<span class="badge-ok">OK</span>`
+                : `<span class="badge-error">ОШИБКА</span>`;
+            html += `<tr>
+                <td>${i+1}</td>
+                <td>${r.device}</td>
+                <td>${r.user || '—'}</td>
+                <td>${r.data}</td>
+                <td class="mono">${r.encrypted}</td>
+                <td>${badge}</td>
+            </tr>`;
+        });
+        document.getElementById('table1').innerHTML = html + '</table>';
+    }
+
+    /* ---- Построение Таблицы 2: Временные характеристики ---- */
+    function buildTable2(results) {
+        let html = `<table>
+            <tr>
+                <th>#</th><th>Устройство</th>
+                <th>Исх. размер (байт)</th><th>Зашифр. размер (байт)</th>
+                <th>Накладные расходы</th><th>Время шифр. (мс)</th>
+                <th>Время расшифр. (мс)</th><th>≤ 50 мс?</th>
+            </tr>`;
+        results.forEach((r, i) => {
+            const overhead = r.wire_size - r.size;
+            const ok = r.t_enc <= 50 && r.t_dec <= 50;
+            html += `<tr>
+                <td>${i+1}</td>
+                <td>${r.device}</td>
+                <td class="ttime">${r.size}</td>
+                <td class="ttime">${r.wire_size}</td>
+                <td class="ttime">+${overhead}</td>
+                <td class="ttime">${r.t_enc.toFixed(6)}</td>
+                <td class="ttime">${r.t_dec.toFixed(6)}</td>
+                <td>${ok ? '<span class="badge-ok">ДА</span>' : '<span class="badge-error">НЕТ</span>'}</td>
+            </tr>`;
+        });
+        document.getElementById('table2').innerHTML = html + '</table>';
+    }
+
+    /* ---- Построение Таблицы 3: Попытка злоумышленника ---- */
+    function buildTable3(attackResults) {
+        let html = `<table>
+            <tr>
+                <th>#</th><th>Устройство</th>
+                <th>Результат перехвата</th><th>Время атаки (мс)</th>
+            </tr>`;
+        attackResults.forEach((r, i) => {
+            const badge = r.result === 'ДАННЫЕ ЗАЩИЩЕНЫ'
+                ? `<span class="badge-protected">ДАННЫЕ ЗАЩИЩЕНЫ</span>`
+                : `<span class="badge-error">СКОМПРОМЕТИРОВАНЫ</span>`;
+            html += `<tr>
+                <td>${i+1}</td>
+                <td>${r.device}</td>
+                <td>${badge}</td>
+                <td class="ttime">${r.t_att.toFixed(6)}</td>
+            </tr>`;
+        });
+        document.getElementById('table3').innerHTML = html + '</table>';
+    }
+
+    /* ---- Построение карточек статистики ---- */
+    function buildStats(stats) {
+        document.getElementById('key-display').innerHTML =
+            `🔑 Ключ шифрования сессии: <b>${stats.key_hex}</b>&nbsp;&nbsp;|&nbsp;&nbsp;` +
+            `256 бит&nbsp;&nbsp;|&nbsp;&nbsp;AES-256-GCM&nbsp;&nbsp;|&nbsp;&nbsp;HKDF-SHA-256`;
+
+        document.getElementById('stats-grid').innerHTML = `
+            <div class="stat-card">
+                <div class="stat-label">Зашифровано пакетов</div>
+                <div class="stat-value blue">${stats.total}</div>
+                <div class="stat-sub">всего обработано</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Успешно расшифровано</div>
+                <div class="stat-value green">${stats.successful}</div>
+                <div class="stat-sub">легитимная сторона</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Перехвачено злоумышленником</div>
+                <div class="stat-value">${stats.attacked}</div>
+                <div class="stat-sub">попыток атаки</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Прочитано атакующим</div>
+                <div class="stat-value ${stats.compromised === 0 ? 'green' : ''}">${stats.compromised}</div>
+                <div class="stat-sub">${stats.compromised === 0 ? 'Все пакеты защищены ✓' : 'Утечка данных!'}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Среднее время шифрования</div>
+                <div class="stat-value blue">${stats.avg_enc.toFixed(4)}</div>
+                <div class="stat-sub">мс (требование ≤ 50 мс)</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Среднее время расшифрования</div>
+                <div class="stat-value blue">${stats.avg_dec.toFixed(4)}</div>
+                <div class="stat-sub">мс (требование ≤ 50 мс)</div>
+            </div>`;
+    }
+
+    /* =========================================================
+       Основная функция — отправить данные и отобразить результаты
+       ========================================================= */
+    function showError(msg) {
+        const el = document.getElementById('inline-error');
+        el.textContent = msg;
+        el.style.display = 'block';
+        setTimeout(() => { el.style.display = 'none'; }, 5000);
+    }
+
+    function runEncryption() {
+        const packets = collectPackets();
+        if (!packets.length) {
+            showError('Введите хотя бы один пакет (устройство и команда обязательны).');
+            return;
+        }
+
+        const btn = document.getElementById('btn-run');
+        btn.disabled = true;
+        btn.textContent = 'Выполняется...';
+        document.getElementById('inline-error').style.display = 'none';
+        document.getElementById('spinner').style.display = 'block';
+        document.getElementById('results-section').style.display = 'none';
+
+        fetch('/encrypt/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ packets })
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.error) { showError('Ошибка: ' + data.error); return; }
+
+            buildTable1(data.results);
+            buildTable2(data.results);
+            buildTable3(data.attack_results);
+            buildStats(data.stats);
+
+            const ts = Date.now();
+            document.getElementById('chart-time').src = data.chart_time + '?t=' + ts;
+            document.getElementById('chart-size').src = data.chart_size + '?t=' + ts;
+
+            document.getElementById('results-section').style.display = 'block';
+            document.getElementById('results-section').scrollIntoView({ behavior: 'smooth' });
+        })
+        .catch(err => showError('Сетевая ошибка: ' + err))
+        .finally(() => {
+            btn.disabled = false;
+            btn.textContent = 'Зашифровать и проверить защиту';
+            document.getElementById('spinner').style.display = 'none';
+        });
+    }
+
+    /* Инициализация через DOMContentLoaded — надёжнее window.onload в iframe */
+    document.addEventListener('DOMContentLoaded', function () {
+        DEFAULT_PACKETS.forEach(p => addRow(p.device, p.user, p.data));
+
+        document.getElementById('btn-add').addEventListener('click', function () { addRow(); });
+        document.getElementById('btn-run').addEventListener('click', runEncryption);
+    });
+</script>
+
+<!-- Datalist: автодополнение для полей ввода -->
+<datalist id="dl-devices">
+    <option value="TSC-001"><option value="TSC-002"><option value="TSC-003">
+    <option value="TAB-101"><option value="TAB-102"><option value="TAB-103">
+</datalist>
+<datalist id="dl-users">
+    <option value="klad_1"><option value="klad_2">
+    <option value="kompl_1"><option value="kompl_2"><option value="admin">
+</datalist>
+<datalist id="dl-commands">
+    <option value="OP:PICK"><option value="OP:SHIP"><option value="OP:MOVE"><option value="OP:COUNT">
+    <option value="ART:5678;QTY:12;LOC:B2-03;OP:SHIP">
+    <option value="ART:9012;QTY:200;LOC:C1-07;OP:PICK">
+    <option value="ART:3456;QTY:5;LOC:A3-02;OP:PICK">
+    <option value="ART:7890;QTY:80;LOC:D4-10;OP:MOVE">
+    <option value="ART:1111;QTY:30;LOC:E2-05;OP:COUNT">
+    <option value="INV:LOC:A-01;COUNT:100">
+    <option value="MOVE:LOC:C1-07;TO:D3-05">
+</datalist>
+
+</body>
+</html>
