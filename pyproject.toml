@@ -15,7 +15,7 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
 name = "encryption-container"
-version = "1.0.0"
+version = "2.0.0"
 description = "Модуль сквозного шифрования трафика ТСД с веб-интерфейсом на Django"
 
 [tool.poetry.dependencies]
@@ -24,3 +24,4 @@ django = "^4.2"
 matplotlib = "^3.8"
 numpy = "^1.26"
 cryptography = "^41.0"
+django-sslserver = "^0.22"
