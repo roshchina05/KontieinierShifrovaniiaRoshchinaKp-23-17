@@ -1,0 +1,47 @@
+---
+- name: Deploy Traffic Encryption Container
+  hosts: all
+  become: no
+  vars:
+    project_dir: /home/runner/workspace
+    repo_url: https://github.com/roshchina05/KontieinierShifrovaniiaRoshchinaKp-23-17.git
+    repo_version: main
+
+  tasks:
+    - name: Create project directory
+      file:
+        path: "{{ project_dir }}/deployed"
+        state: directory
+        mode: 0755
+      tags:
+        - setup
+
+    - name: Copy views.py
+      copy:
+        src: "{{ project_dir }}/tasks/views.py"
+        dest: "{{ project_dir }}/deployed/views.py"
+        mode: 0644
+      tags:
+        - deploy
+
+    - name: Copy index.html
+      copy:
+        src: "{{ project_dir }}/tasks/templates/encryption_app/index.html"
+        dest: "{{ project_dir }}/deployed/index.html"
+        mode: 0644
+      tags:
+        - deploy
+
+    - name: Copy settings.py
+      copy:
+        src: "{{ project_dir }}/django_project/settings.py"
+        dest: "{{ project_dir }}/deployed/settings.py"
+        mode: 0644
+      tags:
+        - config
+
+    - name: Show success message
+      debug:
+        msg: "Модуль шифрования обновлён! Конфигурация изменена централизованно."
+      tags:
+        - run
